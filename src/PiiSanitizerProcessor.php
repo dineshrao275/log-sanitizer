@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Dineshrao275\LogSanitizer;
+namespace Dineshrao\LogSanitizer;
 
 use Monolog\LogRecord;
 use Monolog\Processor\ProcessorInterface;

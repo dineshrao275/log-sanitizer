@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Dineshrao275\LogSanitizer;
+namespace Dineshrao\LogSanitizer;
 
 class SanitizerConfig
 {
