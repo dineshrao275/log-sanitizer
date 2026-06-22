@@ -11,7 +11,7 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Dineshrao275\\L    ogSanitizer\\Tests\\": "tests/"
+            "Dineshrao275\\LogSanitizer\\Tests\\": "tests/"
         }
     },
     "authors": [
@@ -27,5 +27,9 @@
     "require-dev": {
         "phpunit/phpunit": "^11.0"
     },
-    "minimum-stability": "stable"
+    "minimum-stability": "stable",
+    "scripts": {
+        "test": "phpunit",
+        "composer-validate": "composer validate --strict"
+    }
 }

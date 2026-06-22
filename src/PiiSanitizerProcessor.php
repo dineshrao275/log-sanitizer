@@ -28,6 +28,20 @@ class PiiSanitizerProcessor implements ProcessorInterface
         'social_security',
         'private_key',
         'client_secret',
+        'authorization',
+        'bearer',
+        'session',
+        'session_id',
+        'cookie',
+        'set_cookie',
+        'csrf_token',
+        'id_token',
+        'jwt',
+        'passcode',
+        'pin',
+        'otp',
+        'phone',
+        'email',
     ];
 
     private array $keysToRedact;
@@ -43,7 +57,7 @@ class PiiSanitizerProcessor implements ProcessorInterface
     /**
      * Regex pattern to detect credit card numbers (Visa, MasterCard, Amex, etc.)
      */
-    private string $creditCardPattern = '/\b(?:\d[ \-]?){13,16}\b/';
+    private string $creditCardPattern = '/\b(?:\d[ \-]?){12,15}\d\b/';
 
     /**
      * @param array  $customKeys     Additional keys to redact beyond defaults
@@ -85,21 +99,20 @@ class PiiSanitizerProcessor implements ProcessorInterface
     {
         foreach ($data as $key => $value) {
             if (is_array($value)) {
-                // Recurse into nested arrays
                 $data[$key] = $this->sanitizeArray($value);
+            } elseif ($this->isKeySensitive($key)) {
+                $data[$key] = $this->mask;
             } elseif (is_string($value)) {
-                // Priority 1: Key is on the blacklist — redact the entire value
-                if (in_array(strtolower((string) $key), $this->keysToRedact, true)) {
-                    $data[$key] = $this->mask;
-                } else {
-                    // Priority 2: Scan the string value for pattern matches
-                    $data[$key] = $this->sanitizeStringValue($value);
-                }
+                $data[$key] = $this->sanitizeStringValue($value);
             }
-            // Note: int/bool/null values are left untouched
         }
 
         return $data;
+    }
+
+    private function isKeySensitive(string|int $key): bool
+    {
+        return in_array(strtolower((string) $key), $this->keysToRedact, true);
     }
 
     /**
@@ -112,10 +125,39 @@ class PiiSanitizerProcessor implements ProcessorInterface
         }
 
         if ($this->redactCreditCards) {
-            $value = preg_replace($this->creditCardPattern, $this->mask, $value);
+            $value = preg_replace_callback(
+                $this->creditCardPattern,
+                fn (array $matches): string => $this->luhnCheck(preg_replace('/[ \-]/', '', $matches[0]))
+                    ? $this->mask
+                    : $matches[0],
+                $value
+            );
         }
 
         return $value;
+    }
+
+    private function luhnCheck(string $number): bool
+    {
+        if (!ctype_digit($number)) {
+            return false;
+        }
+
+        $sum = 0;
+        $alt = false;
+        for ($i = strlen($number) - 1; $i >= 0; $i--) {
+            $digit = (int) $number[$i];
+            if ($alt) {
+                $digit *= 2;
+                if ($digit > 9) {
+                    $digit -= 9;
+                }
+            }
+            $sum += $digit;
+            $alt = !$alt;
+        }
+
+        return $sum % 10 === 0;
     }
 
     /**
