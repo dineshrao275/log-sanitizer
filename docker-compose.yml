@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: log-sanitizer-dev
+    volumes:
+      # Sync your local files with container in real-time
+      - .:/app
+      # Cache vendor to avoid re-downloading on every restart
+      - vendor_cache:/app/vendor
+    working_dir: /app
+    # Keep container alive so you can exec into it
+    tty: true
+    stdin_open: true
+
+volumes:
+  vendor_cache:
