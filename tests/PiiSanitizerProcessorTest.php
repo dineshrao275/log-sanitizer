@@ -9,6 +9,7 @@ use Monolog\Level;
 use Monolog\LogRecord;
 use PHPUnit\Framework\TestCase;
 use Dineshrao275\LogSanitizer\PiiSanitizerProcessor;
+use Dineshrao275\LogSanitizer\SanitizerConfig;
 
 class PiiSanitizerProcessorTest extends TestCase
 {
@@ -338,5 +339,249 @@ class PiiSanitizerProcessorTest extends TestCase
             'Card: [REDACTED] and [REDACTED]',
             $result->context['note']
         );
+    }
+
+    // --- New feature tests ---
+
+    public function test_it_matches_keys_with_contains_mode(): void
+    {
+        $config = SanitizerConfig::default()
+            ->withMatchMode('contains');
+
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'user_password'  => 'secret',
+            'jwt_token'      => 'eyJhbGci',
+            'stripe_api_key' => 'sk_test_123',
+            'safe_name'      => 'visible',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('[REDACTED]', $result->context['user_password']);
+        $this->assertEquals('[REDACTED]', $result->context['jwt_token']);
+        $this->assertEquals('[REDACTED]', $result->context['stripe_api_key']);
+        $this->assertEquals('visible', $result->context['safe_name']);
+    }
+
+    public function test_it_normalizes_camel_case_keys(): void
+    {
+        $processor = new PiiSanitizerProcessor();
+
+        $record = $this->makeRecord([
+            'apiKey'     => 'key-123',
+            'clientSecret' => 'super-secret',
+            'safeValue'  => 'visible',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('[REDACTED]', $result->context['apiKey']);
+        $this->assertEquals('[REDACTED]', $result->context['clientSecret']);
+        $this->assertEquals('visible', $result->context['safeValue']);
+    }
+
+    public function test_it_normalizes_kebab_case_keys(): void
+    {
+        $processor = new PiiSanitizerProcessor();
+
+        $record = $this->makeRecord([
+            'api-key'         => 'key-123',
+            'access-token'    => 'tok_abc',
+            'safe-value'      => 'visible',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('[REDACTED]', $result->context['api-key']);
+        $this->assertEquals('[REDACTED]', $result->context['access-token']);
+        $this->assertEquals('visible', $result->context['safe-value']);
+    }
+
+    public function test_it_normalizes_uppercase_keys(): void
+    {
+        $processor = new PiiSanitizerProcessor();
+
+        $record = $this->makeRecord([
+            'API_KEY'      => 'key-123',
+            'SECRET'       => 'shhh',
+            'SAFE_VALUE'   => 'visible',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('[REDACTED]', $result->context['API_KEY']);
+        $this->assertEquals('[REDACTED]', $result->context['SECRET']);
+        $this->assertEquals('visible', $result->context['SAFE_VALUE']);
+    }
+
+    public function test_it_excludes_keys_with_except_keys(): void
+    {
+        $config = SanitizerConfig::default()
+            ->withExceptKeys(['email']);
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'email' => 'user@example.com',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('user@example.com', $result->context['email']);
+    }
+
+    public function test_it_excludes_keys_in_contains_mode(): void
+    {
+        $config = SanitizerConfig::default()
+            ->withMatchMode('contains')
+            ->withExceptKeys(['email_template']);
+
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'email'           => 'should@redact.com',
+            'email_template'  => '<h1>Welcome</h1>',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('[REDACTED]', $result->context['email']);
+        $this->assertEquals('<h1>Welcome</h1>', $result->context['email_template']);
+    }
+
+    public function test_it_accepts_sanitizer_config(): void
+    {
+        $config = SanitizerConfig::default()
+            ->withCustomKeys(['otp'])
+            ->withMask('***')
+            ->withoutEmailRedaction()
+            ->withoutCreditCardRedaction();
+
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'otp'      => '482910',
+            'password' => 'secret123',
+            'note'     => 'Contact user@example.com',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('***', $result->context['password']);
+        $this->assertEquals('***', $result->context['otp']);
+        $this->assertEquals('Contact user@example.com', $result->context['note']);
+    }
+
+    public function test_it_uses_partial_masking_for_emails(): void
+    {
+        $config = SanitizerConfig::default()->withPartialMasking();
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'message' => 'Contact dinesh@example.com for help.',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals(
+            'Contact d*****@example.com for help.',
+            $result->context['message']
+        );
+    }
+
+    public function test_it_uses_partial_masking_for_credit_cards(): void
+    {
+        $config = SanitizerConfig::default()->withPartialMasking();
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'note' => 'Card: 4111111111111111',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals(
+            'Card: ************1111',
+            $result->context['note']
+        );
+    }
+
+    public function test_it_uses_partial_masking_for_credit_cards_with_formatting(): void
+    {
+        $config = SanitizerConfig::default()->withPartialMasking();
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'note' => 'Card: 4111-1111-1111-1111',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals(
+            'Card: ****-****-****-1111',
+            $result->context['note']
+        );
+    }
+
+    public function test_it_uses_partial_masking_for_sensitive_key_values(): void
+    {
+        $config = SanitizerConfig::default()->withPartialMasking();
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'password' => 'mySecretPass!',
+            'email'    => 'dinesh@example.com',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('my*********s!', $result->context['password']);
+        $this->assertEquals('d*****@example.com', $result->context['email']);
+    }
+
+    public function test_it_uses_full_mask_for_non_strings_with_partial_masking(): void
+    {
+        $config = SanitizerConfig::default()->withPartialMasking();
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'password' => 123456,
+            'secret'   => true,
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('[REDACTED]', $result->context['password']);
+        $this->assertEquals('[REDACTED]', $result->context['secret']);
+    }
+
+    public function test_it_uses_full_mask_for_short_strings_with_partial_masking(): void
+    {
+        $config = SanitizerConfig::default()->withPartialMasking();
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'pin' => '1234',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('[REDACTED]', $result->context['pin']);
+    }
+
+    public function test_it_uses_contains_mode_with_normalized_key(): void
+    {
+        $config = SanitizerConfig::default()
+            ->withMatchMode('contains');
+        $processor = new PiiSanitizerProcessor($config);
+
+        $record = $this->makeRecord([
+            'user-password' => 'secret',
+        ]);
+
+        $result = $processor($record);
+
+        $this->assertEquals('[REDACTED]', $result->context['user-password']);
     }
 }

@@ -33,6 +33,8 @@ $log->info('User login', [
 
 ## Configuration
 
+### Legacy constructor
+
 ```php
 $processor = new PiiSanitizerProcessor(
     customKeys:        ['otp', 'pin'],
@@ -48,6 +50,116 @@ $processor = new PiiSanitizerProcessor(
 | `mask` | `string` | `'[REDACTED]'` | Replacement string for redacted values |
 | `redactEmails` | `bool` | `true` | Scan string values for email patterns |
 | `redactCreditCards` | `bool` | `true` | Scan string values for credit card numbers (Luhn-validated) |
+
+### SanitizerConfig (recommended for advanced use)
+
+```php
+use Dineshrao275\LogSanitizer\SanitizerConfig;
+
+$config = SanitizerConfig::default()
+    ->withCustomKeys(['otp', 'pin'])
+    ->withMask('***')
+    ->withoutEmailRedaction()
+    ->withoutCreditCardRedaction()
+    ->withMatchMode('contains')
+    ->withExceptKeys(['email_template'])
+    ->withPartialMasking();
+
+$processor = new PiiSanitizerProcessor($config);
+```
+
+| Method | Default | Description |
+|--------|---------|-------------|
+| `withCustomKeys(array)` | `[]` | Additional key names to redact |
+| `withMask(string)` | `'[REDACTED]'` | Replacement string |
+| `withPartialMasking()` | `false` | Show partial values instead of full mask |
+| `withFullMasking()` | `true` | Full mask replacement (default) |
+| `withMatchMode('exact'|'contains')` | `'exact'` | How to match keys against the sensitive list |
+| `withExceptKeys(array)` | `[]` | Keys to exclude from redaction |
+| `withEmailRedaction()` | `true` | Enable email pattern scanning |
+| `withoutEmailRedaction()` | - | Disable email pattern scanning |
+| `withCreditCardRedaction()` | `true` | Enable credit card pattern scanning |
+| `withoutCreditCardRedaction()` | - | Disable credit card pattern scanning |
+
+## Key Match Modes
+
+### Exact mode (default)
+
+Only keys that exactly match a sensitive key are redacted:
+
+```php
+'password' => 'secret'   // redacted
+'user_password' => 'x'   // not redacted
+```
+
+### Contains mode
+
+Any key containing a sensitive word is redacted:
+
+```php
+$config = SanitizerConfig::default()->withMatchMode('contains');
+
+'user_password'   => 'secret'  // redacted (contains "password")
+'jwt_token'       => 'abc'     // redacted (contains "token")
+'stripe_api_key'  => 'sk_...'  // redacted (contains "api_key")
+'my_password_reset' => '...'   // redacted (contains "password")
+```
+
+### Combining with exceptKeys
+
+```php
+$config = SanitizerConfig::default()
+    ->withMatchMode('contains')
+    ->withExceptKeys(['email_template']);
+```
+
+## Key Normalization
+
+Key names are normalized to snake_case for consistent matching. This means `apiKey`, `api-key`, `api_key`, and `API_KEY` are all treated identically:
+
+```php
+$processor = new PiiSanitizerProcessor();
+
+'apiKey'       => 'secret'  // redacted (normalizes to "api_key")
+'api-key'      => 'secret'  // redacted (normalizes to "api_key")
+'API_KEY'      => 'secret'  // redacted (normalizes to "api_key")
+'clientSecret' => 'secret'  // redacted (normalizes to "client_secret")
+```
+
+## Masking Modes
+
+### Full masking (default)
+
+All matching values are replaced with the configured mask string:
+
+```php
+['password' => 'mySecretPass!'] → ['password' => '[REDACTED]']
+['email'    => 'dinesh@example.com'] → ['email' => '[REDACTED]']
+```
+
+### Partial masking
+
+Show enough context for debugging while protecting sensitive data:
+
+```php
+$config = SanitizerConfig::default()->withPartialMasking();
+
+// Sensitive keys
+['password' => 'mySecretPass!'] → ['password' => 'my*********s!']
+['email'    => 'dinesh@example.com'] → ['email' => 'd*****@example.com']
+
+// Pattern redaction within values
+['note' => 'Contact dinesh@example.com'] → ['note' => 'Contact d*****@example.com']
+['note' => 'Card: 4111111111111111']    → ['note' => 'Card: ************1111']
+['note' => 'Card: 4111-1111-1111-1111'] → ['note' => 'Card: ****-****-****-1111']
+```
+
+Non-string values are always fully masked regardless of mode:
+
+```php
+['password' => 123456] → ['password' => '[REDACTED]']
+['secret' => true]     → ['secret' => '[REDACTED]']
+```
 
 ## Default Redacted Keys
 
@@ -84,13 +196,6 @@ $processor = new PiiSanitizerProcessor(
 ```
 
 ## Masking Behavior
-
-All matching values are replaced with the configured mask string:
-
-```php
-new PiiSanitizerProcessor(mask: '***')
-// password => ***
-```
 
 Sensitive keys are redacted regardless of value type:
 

@@ -9,9 +9,6 @@ use Monolog\Processor\ProcessorInterface;
 
 class PiiSanitizerProcessor implements ProcessorInterface
 {
-    /**
-     * Default sensitive key names to redact by key matching.
-     */
     private array $defaultKeys = [
         'password',
         'password_confirmation',
@@ -45,44 +42,49 @@ class PiiSanitizerProcessor implements ProcessorInterface
     ];
 
     private array $keysToRedact;
+    private array $exceptKeys;
     private string $mask;
     private bool $redactEmails;
     private bool $redactCreditCards;
+    private string $matchMode;
+    private bool $partialMasking;
 
-    /**
-     * Regex pattern to detect email addresses inside string values.
-     */
     private string $emailPattern = '/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/';
 
-    /**
-     * Regex pattern to detect credit card numbers (Visa, MasterCard, Amex, etc.)
-     */
     private string $creditCardPattern = '/\b(?:\d[ \-]?){12,15}\d\b/';
 
-    /**
-     * @param array  $customKeys     Additional keys to redact beyond defaults
-     * @param string $mask           The string to replace sensitive values with
-     * @param bool   $redactEmails   Whether to scan string values for email patterns
-     * @param bool   $redactCreditCards Whether to scan string values for credit card patterns
-     */
     public function __construct(
-        array $customKeys = [],
+        array|SanitizerConfig $customKeys = [],
         string $mask = '[REDACTED]',
         bool $redactEmails = true,
-        bool $redactCreditCards = true
+        bool $redactCreditCards = true,
     ) {
+        if ($customKeys instanceof SanitizerConfig) {
+            $config = $customKeys;
+        } else {
+            $config = new SanitizerConfig(
+                customKeys: $customKeys,
+                mask: $mask,
+                redactEmails: $redactEmails,
+                redactCreditCards: $redactCreditCards,
+            );
+        }
+
         $this->keysToRedact = array_map(
-            'strtolower',
-            array_unique(array_merge($this->defaultKeys, $customKeys))
+            fn(string $key): string => $this->normalizeKey($key),
+            array_unique(array_merge($this->defaultKeys, $config->getCustomKeys()))
         );
-        $this->mask = $mask;
-        $this->redactEmails = $redactEmails;
-        $this->redactCreditCards = $redactCreditCards;
+        $this->exceptKeys = array_map(
+            fn(string $key): string => $this->normalizeKey($key),
+            $config->getExceptKeys()
+        );
+        $this->mask = $config->getMask();
+        $this->redactEmails = $config->shouldRedactEmails();
+        $this->redactCreditCards = $config->shouldRedactCreditCards();
+        $this->matchMode = $config->getMatchMode();
+        $this->partialMasking = $config->isPartialMasking();
     }
 
-    /**
-     * Invoked by Monolog before writing each log record.
-     */
     public function __invoke(LogRecord $record): LogRecord
     {
         if (empty($record->context)) {
@@ -92,16 +94,15 @@ class PiiSanitizerProcessor implements ProcessorInterface
         return $record->with(context: $this->sanitizeArray($record->context));
     }
 
-    /**
-     * Recursively walks through any nested array and sanitizes values.
-     */
     private function sanitizeArray(array $data): array
     {
         foreach ($data as $key => $value) {
             if (is_array($value)) {
                 $data[$key] = $this->sanitizeArray($value);
+            } elseif ($this->isKeyExcluded($key)) {
+                continue;
             } elseif ($this->isKeySensitive($key)) {
-                $data[$key] = $this->mask;
+                $data[$key] = $this->maskValue($value);
             } elseif (is_string($value)) {
                 $data[$key] = $this->sanitizeStringValue($value);
             }
@@ -110,31 +111,125 @@ class PiiSanitizerProcessor implements ProcessorInterface
         return $data;
     }
 
-    private function isKeySensitive(string|int $key): bool
+    private function normalizeKey(string $key): string
     {
-        return in_array(strtolower((string) $key), $this->keysToRedact, true);
+        $key = preg_replace('/([a-z])([A-Z])/', '$1_$2', $key);
+        $key = str_replace('-', '_', $key);
+        return strtolower($key);
     }
 
-    /**
-     * Applies regex patterns to scrub sensitive patterns inside string values.
-     */
+    private function isKeyExcluded(string|int $key): bool
+    {
+        return in_array($this->normalizeKey((string) $key), $this->exceptKeys, true);
+    }
+
+    private function isKeySensitive(string|int $key): bool
+    {
+        $key = $this->normalizeKey((string) $key);
+
+        if ($this->matchMode === 'contains') {
+            foreach ($this->keysToRedact as $sensitiveKey) {
+                if (str_contains($key, $sensitiveKey)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        return in_array($key, $this->keysToRedact, true);
+    }
+
+    private function maskValue(mixed $value): string
+    {
+        if ($this->partialMasking && is_string($value)) {
+            return $this->partialMaskValue($value);
+        }
+        return $this->mask;
+    }
+
     private function sanitizeStringValue(string $value): string
     {
         if ($this->redactEmails) {
-            $value = preg_replace($this->emailPattern, $this->mask, $value);
+            if ($this->partialMasking) {
+                $value = preg_replace_callback(
+                    $this->emailPattern,
+                    fn(array $m): string => $this->partialMaskEmail($m[0]),
+                    $value
+                );
+            } else {
+                $value = preg_replace($this->emailPattern, $this->mask, $value);
+            }
         }
 
         if ($this->redactCreditCards) {
             $value = preg_replace_callback(
                 $this->creditCardPattern,
-                fn (array $matches): string => $this->luhnCheck(preg_replace('/[ \-]/', '', $matches[0]))
-                    ? $this->mask
-                    : $matches[0],
+                function (array $matches): string {
+                    $digits = preg_replace('/[ \-]/', '', $matches[0]);
+                    if (!$this->luhnCheck($digits)) {
+                        return $matches[0];
+                    }
+                    return $this->partialMasking
+                        ? $this->partialMaskCard($matches[0])
+                        : $this->mask;
+                },
                 $value
             );
         }
 
         return $value;
+    }
+
+    private function partialMaskValue(string $value): string
+    {
+        if (str_contains($value, '@') && preg_match($this->emailPattern, $value)) {
+            return preg_replace_callback(
+                $this->emailPattern,
+                fn(array $m): string => $this->partialMaskEmail($m[0]),
+                $value
+            );
+        }
+
+        $clean = preg_replace('/[ \-]/', '', $value);
+        if (ctype_digit($clean) && strlen($clean) >= 13 && strlen($clean) <= 16 && $this->luhnCheck($clean)) {
+            return $this->partialMaskCard($value);
+        }
+
+        if (strlen($value) > 6) {
+            return substr($value, 0, 2) . str_repeat('*', strlen($value) - 4) . substr($value, -2);
+        }
+
+        return $this->mask;
+    }
+
+    private function partialMaskEmail(string $email): string
+    {
+        $atPos = strpos($email, '@');
+        if ($atPos === false || $atPos === 0) {
+            return $email;
+        }
+        $name = substr($email, 0, $atPos);
+        $domain = substr($email, $atPos);
+        return $name[0] . str_repeat('*', max(3, strlen($name) - 1)) . $domain;
+    }
+
+    private function partialMaskCard(string $card): string
+    {
+        $digits = preg_replace('/[ \-]/', '', $card);
+        $last4 = substr($digits, -4);
+        $masked = str_repeat('*', strlen($digits) - 4) . $last4;
+
+        $result = '';
+        $idx = 0;
+        for ($i = 0; $i < strlen($card); $i++) {
+            if (ctype_digit($card[$i])) {
+                $result .= $masked[$idx];
+                $idx++;
+            } else {
+                $result .= $card[$i];
+            }
+        }
+        return $result;
     }
 
     private function luhnCheck(string $number): bool
@@ -160,10 +255,6 @@ class PiiSanitizerProcessor implements ProcessorInterface
         return $sum % 10 === 0;
     }
 
-    /**
-     * Returns the final merged list of keys being redacted.
-     * Useful for debugging your configuration.
-     */
     public function getRedactedKeys(): array
     {
         return $this->keysToRedact;
