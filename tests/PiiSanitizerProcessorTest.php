@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace Dineshrao275\LogSanitizer\Tests;
+namespace Dineshrao\LogSanitizer\Tests;
 
 use DateTimeImmutable;
 use Monolog\Level;
 use Monolog\LogRecord;
 use PHPUnit\Framework\TestCase;
-use Dineshrao275\LogSanitizer\PiiSanitizerProcessor;
-use Dineshrao275\LogSanitizer\SanitizerConfig;
+use Dineshrao\LogSanitizer\PiiSanitizerProcessor;
+use Dineshrao\LogSanitizer\SanitizerConfig;
 
 class PiiSanitizerProcessorTest extends TestCase
 {

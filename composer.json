@@ -1,17 +1,17 @@
 {
-    "name": "dineshrao275/log-sanitizer",
+    "name": "dineshrao/log-sanitizer",
     "description": "A lightweight Monolog processor to automatically redact PII and sensitive data from logs.",
     "type": "library",
     "license": "MIT",
     "keywords": ["monolog", "logging", "pii", "gdpr", "redact", "sanitize"],
     "autoload": {
         "psr-4": {
-            "Dineshrao275\\LogSanitizer\\": "src/"
+            "Dineshrao\\LogSanitizer\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Dineshrao275\\LogSanitizer\\Tests\\": "tests/"
+            "Dineshrao\\LogSanitizer\\Tests\\": "tests/"
         }
     },
     "authors": [

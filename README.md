@@ -5,7 +5,7 @@ A lightweight, zero-config Monolog processor that automatically redacts PII and 
 ## Installation
 
 ```bash
-composer require dineshrao275/log-sanitizer
+composer require dineshrao/log-sanitizer
 ```
 
 ## Requirements
@@ -18,7 +18,7 @@ composer require dineshrao275/log-sanitizer
 ```php
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
-use Dineshrao275\LogSanitizer\PiiSanitizerProcessor;
+use Dineshrao\LogSanitizer\PiiSanitizerProcessor;
 
 $log = new Logger('app');
 $log->pushHandler(new StreamHandler('app.log', \Monolog\Level::Debug));
@@ -54,7 +54,7 @@ $processor = new PiiSanitizerProcessor(
 ### SanitizerConfig (recommended for advanced use)
 
 ```php
-use Dineshrao275\LogSanitizer\SanitizerConfig;
+use Dineshrao\LogSanitizer\SanitizerConfig;
 
 $config = SanitizerConfig::default()
     ->withCustomKeys(['otp', 'pin'])
@@ -233,7 +233,7 @@ This package reduces accidental PII logging but should not replace avoiding sens
 
 ```php
 // config/logging.php
-use Dineshrao275\LogSanitizer\PiiSanitizerProcessor;
+use Dineshrao\LogSanitizer\PiiSanitizerProcessor;
 
 'channels' => [
     'stack' => [
@@ -252,7 +252,7 @@ use Dineshrao275\LogSanitizer\PiiSanitizerProcessor;
 // app/Logging/SanitizeLog.php
 namespace App\Logging;
 
-use Dineshrao275\LogSanitizer\PiiSanitizerProcessor;
+use Dineshrao\LogSanitizer\PiiSanitizerProcessor;
 use Monolog\Logger;
 
 class SanitizeLog
@@ -269,7 +269,7 @@ class SanitizeLog
 ```yaml
 # config/services.yaml
 services:
-    Dineshrao275\LogSanitizer\PiiSanitizerProcessor:
+    Dineshrao\LogSanitizer\PiiSanitizerProcessor:
         arguments:
             $customKeys: ['otp']
             $redactCreditCards: true
